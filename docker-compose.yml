@@ -6,4 +6,7 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./backend/static:/app/backend/static:ro
+    env_file:
+      - .env
     restart: unless-stopped

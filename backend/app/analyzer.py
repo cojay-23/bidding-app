@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -15,11 +17,32 @@ from docx import Document
 from pypdf import PdfReader
 
 from .config import PROJECTS_DIR
-from .database import list_files, stored_file_path, update_project
+from .database import add_report, list_files, stored_file_path, update_project
 
 
 TODAY = date(2026, 6, 21)
-KEY_RISK_WORDS = ("否决", "废标", "不予通过", "无效", "最高投标限价", "保证金", "签字", "盖章", "资格", "负偏离", "不得")
+# ═══════════════════════════════════════════════════════════════
+# 废标条款关键词体系（参照 bidding-analyst skill 四级分类）
+# ═══════════════════════════════════════════════════════════════
+RISK_FATAL = (  # 🔴 致命 — 直接废标表述
+    "废标", "否决", "作废", "不予通过", "取消中标资格",
+    "按废标处理", "视为不响应", "无效投标", "投标无效",
+    "拒绝", "取消投标资格",
+)
+RISK_STAR = (  # ⭐ 星号否决条款 — 一条不满足即废标
+    "★", "*",
+)
+RISK_STRICT = (  # 🟡 严重 — 强制/禁止性要求
+    "必须", "不得", "严禁", "禁止", "否则废标", "否则无效",
+    "应", "须", "投标人应", "投标人须",
+)
+RISK_REVIEW = (  # 🟠 需注意 — 审查相关
+    "资格审查", "符合性审查", "初步评审", "形式审查",
+    "资格条件", "资质要求", "不接受", "不予受理",
+    "逾期", "负偏离", "不满足",
+)
+KEY_RISK_WORDS = RISK_FATAL + RISK_STRICT + RISK_REVIEW
+
 SCORE_WORDS = ("评分", "得分", "分值", "满分", "技术", "商务", "价格", "评标办法", "评分标准")
 MATERIAL_WORDS = ("提供", "证明", "截图", "承诺函", "授权", "营业执照", "保函", "查询结果", "证书", "复印件", "扫描件")
 SCREENSHOT_WORDS = ("截图", "查询截图", "功能截图", "页面截图", "网站截图", "平台截图", "系统截图", "查询结果")
@@ -30,20 +53,20 @@ PRICE_WORDS = ("预算", "最高投标限价", "投标报价", "保证金", "价
 
 def is_full_bidding_analyst_candidate(files: list[dict[str, Any]]) -> bool:
     names = [file["filename"].lower() for file in files]
-    return any("招标" in name and name.endswith(".docx") for name in names) and any("sca" in name for name in names)
+    return any("招标" in name and name.endswith(".docx") for name in names)
 
 
-def pick_full_core_inputs(project_id: str, files: list[dict[str, Any]]) -> tuple[Path, Path] | None:
+def pick_full_core_inputs(project_id: str, files: list[dict[str, Any]]) -> tuple[Path, Path | None] | None:
     tender: Path | None = None
     sca: Path | None = None
     for file in files:
         name = file["filename"].lower()
         path = stored_file_path(project_id, file["stored_name"])
-        if "招标" in name and name.endswith(".docx"):
+        if "招标" in name and name.endswith(".docx") and tender is None:
             tender = path
-        elif "sca" in name and name.endswith(".docx"):
+        elif name.endswith(".docx") and "招标" not in name and sca is None:
             sca = path
-    if tender and sca:
+    if tender:
         return tender, sca
     return None
 
@@ -55,7 +78,8 @@ def run_full_bidding_analyst_core(project_id: str, files: list[dict[str, Any]], 
     tender, sca = picked
     env = os.environ.copy()
     env["BIDDING_ANALYST_TENDER"] = str(tender)
-    env["BIDDING_ANALYST_SCA"] = str(sca)
+    if sca:
+        env["BIDDING_ANALYST_SCA"] = str(sca)
     env["BIDDING_ANALYST_OUT"] = str(report_path)
     script = Path(__file__).with_name("bidding_analyst_core.py")
     result = subprocess.run(
@@ -64,27 +88,29 @@ def run_full_bidding_analyst_core(project_id: str, files: list[dict[str, Any]], 
         cwd=str(script.parents[3]),
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
     )
     if result.returncode != 0:
         raise RuntimeError(f"bidding-analyst 内核运行失败：{result.stderr or result.stdout}")
-    return {
-        "project_name": "信息安全供应链安全检测平台项目",
-        "project_no": "2540C0701064",
-        "buyer": "中国东方航空股份有限公司",
-        "agent": "上海东航招标咨询有限公司",
-        "budget": "150万元（含税）",
-        "deadline": "2025年8月12日9时30分（北京时间）",
-        "file_count": len(files),
-        "risk_items": [f"废标条款 {i}" for i in range(1, 8)],
-        "score_items": [f"技术评分项 {i}" for i in range(1, 34)],
-        "material_items": [f"材料清单项 {i}" for i in range(1, 57)],
-        "screenshot_items": [f"测试截图 {i}" for i in range(1, 45)],
-        "has_solution": True,
-        "engine": "bidding-analyst-core",
-        "score_simulation": {"conservative": 17, "expected": 41, "full": 50, "max": 50},
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-    }
+    try:
+        summary = json.loads(result.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        summary = {
+            "engine": "llm-kimi",
+            "report_path": str(report_path),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    summary["file_count"] = len(files)
+    summary["has_solution"] = sca is not None
+    risk_count = summary.pop("risk_count", 0)
+    if isinstance(risk_count, int) and risk_count > 0 and not summary.get("risk_items"):
+        summary["risk_items"] = [f"废标条款 {i}" for i in range(1, risk_count + 1)]
+    summary.setdefault("risk_items", [])
+    summary.setdefault("score_items", [])
+    summary.setdefault("material_items", [])
+    summary.setdefault("screenshot_items", [])
+    summary.setdefault("score_simulation", {"conservative": 0, "expected": 0, "full": 0, "max": 0})
+    return summary
 
 
 def normalize_text(text: str) -> str:
@@ -156,6 +182,100 @@ def lines_with(words: tuple[str, ...], text: str, limit: int, min_len: int = 8) 
     return picked
 
 
+def _classify_risk_level(text: str) -> str:
+    """按四级体系分类：fatal > star > strict > review"""
+    if any(w in text for w in RISK_FATAL):
+        return "fatal"
+    if any(w in text for w in RISK_STAR):
+        return "star"
+    # strict 词（应/须/必须等）必须同时命中 review 或 fatal 词才算，避免泛化误报
+    has_strict = any(w in text for w in RISK_STRICT)
+    has_review = any(w in text for w in RISK_REVIEW)
+    has_fatal = any(w in text for w in RISK_FATAL)
+    if has_strict and (has_review or has_fatal):
+        return "strict"
+    if has_review:
+        return "review"
+    return "review"
+
+
+_NOISE_PATTERNS = [
+    r"^\s*[目錄录]\s*[录錄次]",             # "目录" 开头
+    re.compile(r"\.{4,}"),                   # 大量点号（页码填充）
+    re.compile(r"^\s*[\(（]?[一二三四五六七八九十\d]+[\)）]?\s*$"),  # 纯编号行
+]
+_NOISE_NUM_COUNT = 5  # 一个段落里超过此数量子编号，视为目录
+
+
+def _is_directory_paragraph(para: str) -> bool:
+    """检测是否为目录/TOC 段落"""
+    # 直接匹配目录关键词
+    if re.search(r"^\s*[目錄录]\s*[录錄次]", para):
+        return True
+    # 大量连续点号（目录页码填充符）
+    if len(re.findall(r"\.{3,}", para)) >= 3:
+        return True
+    # 段落内子编号过多（如 1.1.1 1.1.2 1.1.3 1.1.4 ...）
+    sub_numbers = re.findall(r"\d+\.\d+(?:\.\d+)?", para)
+    if len(sub_numbers) >= _NOISE_NUM_COUNT:
+        return True
+    # 纯编号或空白填充行
+    if re.match(r"^\s*[\[\(]?\d+[\]\)\.、]?\s*(\.{2,})?\s*$", para) and len(para) < 40:
+        return True
+    return False
+
+
+RISK_LABEL = {"fatal": "致命", "star": "星号否决", "strict": "严重", "review": "需注意"}
+
+
+def extract_risk_detail(combined: str, limit: int = 20) -> list[dict[str, str]]:
+    """参照 bidding-analyst skill 提取废标条款，返回结构化数据。
+    比原 lines_with 升级点：
+    1. 按段落拆分而非按行
+    2. 四级风险分类（致命/星号/严重/需注意）
+    3. 过滤目录/TOC 噪声段落
+    4. 去重
+    """
+    paras = re.split(r"\n{2,}", combined)
+    items: list[dict[str, str]] = []
+    seen = set()
+
+    for para in paras:
+        clean = para.strip()
+        if len(clean) < 15:
+            continue
+        # 过滤目录/TOC 噪声
+        if _is_directory_paragraph(clean):
+            continue
+        # 快速检查是否有任何风险关键词
+        if not any(w in clean for w in KEY_RISK_WORDS):
+            continue
+        level = _classify_risk_level(clean)
+        # 去重：长文本取前 200 字做特征
+        sig = clean[:200]
+        if sig in seen:
+            continue
+        seen.add(sig)
+        # 智能截取：长段落取前 320 字并用换行分隔，短段落全取
+        if len(clean) <= 320:
+            context = clean
+        else:
+            # 在 300-340 字之间找最近的句号或换行处截断
+            cut = clean[:340].rfind("。")
+            if cut > 200:
+                context = clean[:cut + 1] + "…"
+            else:
+                context = clean[:320] + "…"
+        items.append({"text": context, "level": level})
+        if len(items) >= limit:
+            break
+
+    # 按风险等级排序：star > fatal > strict > review
+    rank = {"star": 0, "fatal": 1, "strict": 2, "review": 3}
+    items.sort(key=lambda x: rank.get(x["level"], 9))
+    return items
+
+
 def detect_project_name(text: str, fallback: str) -> str:
     value = find_first([r"项目名称[:：]\s*([^\n]+)", r"招标项目名称[:：]\s*([^\n]+)"], text)
     return fallback if value == "待人工复核" else value
@@ -190,17 +310,14 @@ def detect_dates(text: str) -> list[dict[str, str]]:
 def build_summary(project_id: str, files: list[dict[str, Any]], extracted: dict[str, str]) -> dict[str, Any]:
     combined = "\n".join(extracted.values())
     fallback = files[0]["filename"].rsplit(".", 1)[0] if files else f"项目 {project_id}"
-    risk_items = lines_with(KEY_RISK_WORDS, combined, 18)
+    risk_detail = extract_risk_detail(combined, 20)
+    risk_items = [item["text"] for item in risk_detail]  # 兼容前端 length 计数
     score_items = lines_with(SCORE_WORDS, combined, 18)
     material_items = lines_with(MATERIAL_WORDS, combined, 24)
     screenshot_items = lines_with(SCREENSHOT_WORDS, combined, 18)
     qualification_items = lines_with(QUALIFICATION_WORDS, combined, 18)
     price_items = lines_with(PRICE_WORDS, combined, 16)
     binding_items = lines_with(BINDING_WORDS, combined, 16)
-    has_solution = len(files) > 1
-    conservative = 17 if has_solution else 0
-    expected = 41 if has_solution else 0
-    full = 50 if has_solution else 0
     return {
         "project_name": detect_project_name(combined, fallback),
         "project_no": find_first([r"项目编号[:：]\s*([^\n]+)", r"招标编号[:：]\s*([^\n]+)"], combined),
@@ -218,8 +335,9 @@ def build_summary(project_id: str, files: list[dict[str, Any]], extracted: dict[
         "price_items": price_items,
         "binding_items": binding_items,
         "timeline_items": detect_dates(combined),
-        "has_solution": has_solution,
-        "score_simulation": {"conservative": conservative, "expected": expected, "full": full, "max": 50},
+        "has_solution": len(files) > 1,
+        "risk_detail": risk_detail,  # 新增：四级分类风险数据
+        "score_simulation": {"conservative": 0, "expected": 0, "full": 0, "max": 0},
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -235,6 +353,44 @@ def list_cards(items: list[str], empty: str, cls: str = "info-card", checkbox: b
             f'<p>{esc(item)}</p></article>'
         )
     return '<div class="card-list">' + "\n".join(cards) + "</div>"
+
+
+def render_risk_cards(risk_detail: list[dict[str, str]], empty: str = "暂未自动识别到明显废标条款，请人工复核投标人须知和评标办法。") -> str:
+    """四级风险彩色卡片渲染。🟥 star > 🟥 fatal > 🟧 strict > 🟨 review"""
+    if not risk_detail:
+        return f'<div class="info-block"><p class="muted">{esc(empty)}</p></div>'
+    cls_map = {"star": "risk-star", "fatal": "risk-fatal", "strict": "risk-strict", "review": "risk-review"}
+    guidance = "以下条目由关键词匹配自动提取，未经大模型语义分析。请以招标文件原文为准，逐条人工核验。"
+    cards = []
+    for index, item in enumerate(risk_detail, 1):
+        level = item.get("level", "review")
+        cls = cls_map.get(level, "risk-review")
+        label = RISK_LABEL.get(level, "需注意")
+        tag_cls = f"level-{level}" if level in ("star", "fatal", "strict", "review") else "level-review"
+        prefix = "⚠️ 星号否决：" if level == "star" else ("🔴 致命废标：" if level == "fatal" else "")
+        text = item["text"]
+        # 长文本用 details/summary 折叠，短文本直接展示
+        if len(text) > 180:
+            summary_text = text[:160].rstrip("。；;，,、 ") + "…"
+            body = (
+                f'<article class="{cls}"><div class="card-head">'
+                f'<span class="num">{index}</span>'
+                f'<span class="risk-level-tag {tag_cls}">{label}</span>'
+                f'</div><details><summary>{prefix}{esc(summary_text)}</summary>'
+                f'<div class="risk-full-text">{esc(text)}</div></details></article>'
+            )
+        else:
+            body = (
+                f'<article class="{cls}"><div class="card-head">'
+                f'<span class="num">{index}</span>'
+                f'<span class="risk-level-tag {tag_cls}">{label}</span>'
+                f'</div><p>{prefix}{esc(text)}</p></article>'
+            )
+        cards.append(body)
+    return (
+        f'<p class="section-hint">{guidance}</p>'
+        + '<div class="card-list">' + "\n".join(cards) + "</div>"
+    )
 
 
 def timeline(items: list[dict[str, str]]) -> str:
@@ -316,12 +472,28 @@ def render_report(summary: dict[str, Any], files: list[dict[str, Any]]) -> str:
     .metric-grid,.overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric,.overview div{padding:14px;border:1px solid var(--line);border-radius:8px;background:#fbfcfd}.metric span,.overview span{display:block;color:var(--muted);font-size:13px}.metric strong{display:block;margin-top:8px;font-size:24px}.metric p{margin:8px 0 0;color:var(--muted);font-size:13px}
     .badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700}.fatal{background:#fee4e2;color:var(--danger)}.ok{background:#dcfae6;color:var(--ok)}.warn{background:#fef0c7;color:var(--warn)}
     .timeline{position:relative}.timeline-item{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;padding:10px 0}.timeline-item>span{width:12px;height:12px;border-radius:999px;background:var(--primary);margin-top:7px}.timeline-item div{border-bottom:1px solid var(--line);padding-bottom:10px}.timeline-item p{margin:4px 0}.timeline-item em{display:block;color:var(--warn);font-style:normal;font-weight:700}.timeline-item small{color:var(--muted)}
-    .card-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.info-card,.risk-card,.score-card{border:1px solid var(--line);border-radius:8px;background:#fbfcfd;padding:14px}.risk-card{border-left:4px solid var(--danger)}.card-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:999px;background:var(--soft);color:var(--primary);font-weight:800}blockquote{margin:10px 0 0;padding:10px 12px;border-left:3px solid var(--primary);background:#f8fafc;color:#344054}
+    .card-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.info-card,.risk-card,.risk-star,.risk-fatal,.risk-strict,.risk-review,.score-card{border:1px solid var(--line);border-radius:8px;background:#fbfcfd;padding:14px}.risk-card{border-left:4px solid var(--danger)}.risk-star{border:2px solid #b42318;border-left:5px solid #b42318;background:#fff5f5}.risk-fatal{border-left:4px solid #b42318;background:#fef2f2}.risk-strict{border-left:4px solid #b54708;background:#fff8f1}.risk-review{border-left:3px solid #92400e;background:#fffbf5}.card-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.num{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:999px;background:var(--soft);color:var(--primary);font-weight:800}.risk-star .num{background:#fecaca;color:#b42318}.risk-fatal .num{background:#fee2e2;color:#b42318}.risk-strict .num{background:#fed7aa;color:#b54708}.risk-review .num{background:#fef3c7;color:#92400e}.risk-level-tag{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700;margin-left:8px}.level-star{background:#fecaca;color:#b42318}.level-fatal{background:#fee2e2;color:#b42318}.level-strict{background:#fed7aa;color:#b54708}.level-review{background:#fef3c7;color:#92400e}
+    .risk-full-text{padding:8px 0 0;font-size:14px;color:#475569;line-height:1.7}
+    .info-block{padding:10px 14px;border-radius:8px;background:#f0f9ff;border:1px solid #bae6fd;margin-bottom:14px}
+    .section-hint{font-size:13px;color:#475569;margin:0 0 8px;line-height:1.6}
+    .scoring-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:18px;align-items:start}
+    .scoring-col{border:1px solid var(--line);border-radius:8px;padding:16px;background:#fbfcfd}
+    .scoring-col h3{margin-top:0}
+    .scoring-main{margin-bottom:14px}
+    .scoring-main h3{margin:0 0 10px;font-size:15px}
+    .ref-block{border:1px solid #d1d5db;border-radius:8px;padding:10px 14px;background:#fafbfc;margin-top:10px}
+    .ref-block summary{cursor:pointer;font-weight:700;font-size:14px;color:#475569}
+    .ref-block table{margin-top:8px}
+    .scoring-table th,.scoring-table td,.check-table th,.check-table td{border-bottom:1px solid #e2e8f0;padding:8px 10px;text-align:left;font-size:13px}
+    .scoring-table th,.check-table th{background:#f8fafc;color:var(--muted);font-weight:700}
+    .risk-full-text + details summary{cursor:pointer;font-size:14px;line-height:1.6}
+    .risk-star details summary,.risk-fatal details summary,.risk-strict details summary,.risk-review details summary{font-weight:700}
+    details .risk-full-text{margin-top:8px;padding:10px 12px;background:rgba(255,255,255,.6);border-radius:6px;border:1px solid var(--line)}
     .score-row{display:grid;grid-template-columns:120px minmax(0,1fr)90px;gap:12px;align-items:center;margin:12px 0}.score-row small{grid-column:2/4;color:var(--muted)}.bar{height:10px;border-radius:999px;background:#e7edf3;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--primary),#14b8a6)}
     details{border:1px solid var(--line);border-radius:8px;padding:12px;background:#fbfcfd;margin:10px 0}summary{cursor:pointer;font-weight:800}.check{display:flex;gap:8px;align-items:flex-start;margin:10px 0;color:#344054}.check input{margin-top:4px}.progress{display:flex;align-items:center;gap:10px;background:#edf2f7;border-radius:999px;height:12px;margin-bottom:14px}.progress i{display:block;height:100%;width:0;border-radius:999px;background:var(--primary)}.progress span{font-size:12px;color:var(--muted)}
     table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border-bottom:1px solid var(--line);padding:10px;text-align:left;vertical-align:top;word-break:break-word}th{color:var(--muted);background:#f8fafc}.word-framework{padding:14px;border:1px dashed var(--line);border-radius:8px;background:#fbfcfd}.word-framework h2{font-size:18px;margin:14px 0 8px}.word-framework h3{font-size:15px;margin:8px 0}
     button,.button{min-height:38px;border:0;border-radius:6px;padding:0 14px;background:var(--primary);color:#fff;font-weight:800;text-decoration:none;cursor:pointer}button:hover,.button:hover{background:var(--primary-2)}
-    @media(max-width:980px){.report-shell{grid-template-columns:1fr}.toc{position:relative;height:auto}.toc nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}main{padding:14px}.metric-grid,.overview,.card-list{grid-template-columns:1fr}.score-row{grid-template-columns:1fr}.score-row small{grid-column:auto}}
+    @media(max-width:980px){.report-shell{grid-template-columns:1fr}.toc{position:relative;height:auto}.toc nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}main{padding:14px}.metric-grid,.overview,.card-list,.scoring-grid{grid-template-columns:1fr}.score-row{grid-template-columns:1fr}.score-row small{grid-column:auto}}
     @media print{.toc,button{display:none}.report-shell{display:block}main{max-width:none;padding:0}section,.hero{break-inside:avoid;background:#fff}}
     """
     js = """
@@ -353,20 +525,38 @@ def render_report(summary: dict[str, Any], files: list[dict[str, Any]]) -> str:
 <header class="hero"><h2>{esc(summary["project_name"])} 招标文件分析报告</h2><p>分析人：标书阅读专员 AI · 报告包含废标、评分、得分测算、材料清单、装订要求、框架和自检工具。</p></header>
 <section id="overview"><div class="section-title"><h2>一、项目基本信息速览</h2><span class="badge ok">已解析</span></div><div class="overview"><div><span>项目编号</span>{esc(summary["project_no"])}</div><div><span>招标/采购人</span>{esc(summary["buyer"])}</div><div><span>招标代理</span>{esc(summary["agent"])}</div><div><span>预算/限价</span>{esc(summary["budget"])}</div></div><h3>上传文件</h3><table><thead><tr><th>文件名</th><th>大小 Byte</th><th>上传时间</th></tr></thead><tbody>{file_rows}</tbody></table></section>
 <section id="timeline"><h2>二、关键时间节点</h2>{timeline(summary["timeline_items"])}</section>
-<section id="risks"><div class="section-title"><h2>三、废标条款清单</h2><span class="badge fatal">优先核验</span></div>{list_cards(summary["risk_items"], "暂未自动识别到明显废标条款，请人工复核评标办法和投标人须知。", "risk-card")}</section>
-<section id="scoring"><h2>四、评分标准详解</h2>{score_bar("技术部分", 50, 100, "按本项目技术评分表进行功能、方案和证明材料评审。")}{score_bar("商务/其他", 10, 100, "资质、业绩、服务和响应材料需结合评分表人工复核。")}{score_bar("价格部分", 40, 100, "价格分依赖最终报价和评标基准价，当前不伪造竞争报价。")}<details open><summary>评分规则线索</summary>{list_cards(summary["score_items"], "暂未识别到评分标准线索。", "score-card")}</details></section>
+<section id="risks"><div class="section-title"><h2>三、废标条款清单</h2><span class="badge fatal">⚠️ 优先核验</span></div>{render_risk_cards(summary.get("risk_detail", []))}</section>
+<section id="scoring"><div class="section-title"><h2>四、评分标准详解</h2><span class="badge warn">参照招标文件原文</span></div><div class="info-block"><p class="section-hint">🎯 <strong>怎么读：</strong>下方为从招标文件中自动提取的评分规则线索（主要信息）。底部为常见评分大类结构参考，请以招标文件「评标办法」「评分标准」章节为准。</p></div><div class="scoring-main"><h3>📋 提取到的评分规则线索</h3>{list_cards(summary["score_items"], "暂未识别到评分标准线索，请人工查阅招标文件「评标办法」「评分标准」章节。", "score-card")}</div><details class="ref-block"><summary>📊 常见评分大类结构参考（以招标文件原文为准）</summary><table class="scoring-table"><thead><tr><th>评分大类</th><th>参考权重</th><th>参考满分</th></tr></thead><tbody><tr><td>技术部分</td><td>50-60%</td><td>50-60 分</td></tr><tr><td>商务部分</td><td>10-20%</td><td>10-20 分</td></tr><tr><td>价格部分</td><td>20-40%</td><td>20-40 分</td></tr></tbody></table></details></section>
 <section id="score-simulation"><h2>五、我方方案得分测算</h2>{simulation_cards(summary)}</section>
-<section id="qualification"><h2>六、资质门槛清单</h2>{list_cards(summary["qualification_items"], "暂未识别到资质门槛线索。", "info-card", True)}</section>
-<section id="price"><h2>七、价格限制与报价策略参考</h2>{list_cards(summary["price_items"], "暂未识别到价格限制线索。", "info-card")}<blockquote>报价策略建议属于分析推断，最终报价需结合成本、竞争态势和价格分公式人工决策。</blockquote></section>
+<section id="qualification"><div class="section-title"><h2>六、资质门槛清单</h2><span class="badge warn">硬性门槛</span></div><div class="info-block"><p class="section-hint">📋 <strong>怎么读：</strong>下方为从招标文件中自动提取的资质/资格相关线索（主要信息）。每条请对照招标文件「投标人资格要求」「资格审查」章节确认。底部为人工核查清单参考。</p></div><div class="scoring-main"><h3>📌 已识别的资质线索</h3>{list_cards(summary["qualification_items"], "暂未识别到资质门槛线索，请人工查阅招标文件「投标人资格要求」。", "info-card", True)}</div><details class="ref-block"><summary>🔍 人工核查清单参考（请以招标文件原文为准）</summary><table class="check-table"><thead><tr><th>核查项</th><th>状态</th><th>要求</th></tr></thead><tbody><tr><td>营业执照经营范围</td><td><span class="badge warn">待确认</span></td><td>是否覆盖本项目采购内容</td></tr><tr><td>行业资质证书</td><td><span class="badge warn">待确认</span></td><td>核对等级要求（如：甲级/乙级</td></tr><tr><td>类似项目业绩</td><td><span class="badge warn">待确认</span></td><td>数量、金额门槛、时间范围</td></tr><tr><td>项目经理资质</td><td><span class="badge warn">待确认</span></td><td>证书类型、级别、社保要求</td></tr><tr><td>信用要求</td><td><span class="badge warn">待确认</span></td><td>信用中国截图、无违法记录</td></tr><tr><td>财务要求</td><td><span class="badge warn">待确认</span></td><td>审计报告年限、资产负债率</td></tr></tbody></table></details></section>
+<section id="price"><div class="section-title"><h2>七、价格限制与报价策略参考</h2><span class="badge warn">报价策略</span></div><div class="info-block"><p class="section-hint">💰 <strong>怎么读：</strong>下方为从招标文件中提取的价格相关信息（预算/限价/保证金/报价方式等，主要信息）。底部为常见价格分计算公式参考（以招标文件原文为准）。</p></div><div class="scoring-main"><h3>📌 价格相关信息</h3>{list_cards(summary["price_items"], "暂未识别到价格限制线索，请人工查阅「投标人须知」和「报价要求」。", "info-card")}</div><details class="ref-block"><summary>📐 常见价格分计算公式参考（以招标文件原文为准）</summary><table class="scoring-table"><thead><tr><th>计算公式</th><th>场景</th></tr></thead><tbody><tr><td>低价优先法</td><td>最低价满分，其余按比例递减</td></tr><tr><td>均价基准法</td><td>接近平均价得高分</td></tr><tr><td>综合评分法</td><td>多因素加权</td></tr></tbody></table></details><blockquote>⚠️ 报价策略建议属于分析推断。最终报价需结合成本、竞争态势和价格分计算公式人工决策。</blockquote></section>
 <section id="bonus"><h2>八、加分机会与满分材料清单</h2>{list_cards(summary["score_items"][:10], "暂未识别到明确加分机会。", "info-card", True)}</section>
 <section id="evidence-materials"><h2>九、截图与证明材料清单</h2><details open><summary>9.1 需提供截图的条款</summary>{list_cards(summary["screenshot_items"], "暂未识别到明确截图条款。", "info-card", True)}</details><details open><summary>9.2 非截图类证明材料</summary>{list_cards(summary["material_items"], "暂未识别到明确证明材料条款。", "info-card", True)}</details></section>
-<section id="binding"><h2>十、装订封装要求</h2>{list_cards(summary["binding_items"], "暂未识别到装订封装要求，请人工复核投标人须知。", "info-card", True)}</section>
+<section id="binding"><div class="section-title"><h2>十、装订封装要求</h2><span class="badge warn">格式规范</span></div><div class="info-block"><p class="section-hint">📦 <strong>怎么读：</strong>下方为从招标文件中提取的装订封装线索（主要信息）。底部为提交前必查清单参考，请以招标文件原文为准。</p></div><div class="scoring-main"><h3>📌 提取到的装订封装线索</h3>{list_cards(summary["binding_items"], "暂未识别到装订封装要求，请人工查阅「投标人须知」中关于投标文件装订、密封、递交的章节。", "info-card")}</div><details class="ref-block"><summary>📋 提交前必查清单参考（请以招标文件原文为准）</summary><table class="check-table"><thead><tr><th>核查项</th><th>状态</th></tr></thead><tbody><tr><td>正本份数</td><td><span class="badge warn">待确认</span></td></tr><tr><td>副本份数</td><td><span class="badge warn">待确认</span></td></tr><tr><td>装订方式（胶装/线装）</td><td><span class="badge warn">待确认</span></td></tr><tr><td>密封要求（封条/密封章）</td><td><span class="badge warn">待确认</span></td></tr><tr><td>电子版介质（U盘/光盘）</td><td><span class="badge warn">待确认</span></td></tr><tr><td>封套标识信息</td><td><span class="badge warn">待确认</span></td></tr><tr><td>签字盖章位置</td><td><span class="badge warn">待确认</span></td></tr></tbody></table></details></section>
 <section id="bid-framework"><div class="section-title"><h2>十一、投标文件框架</h2><button type="button" data-copy-target="framework-content">复制框架</button></div><div id="framework-content" class="word-framework">{framework_html()}</div></section>
 <section id="checklist"><h2>十二、投标文件自检 Checklist</h2>{checklist_section(summary["risk_items"])}</section>
 <section id="todo"><h2>十三、素材准备 TodoList</h2>{list_cards(summary["material_items"][:18], "暂无素材任务。", "info-card", True)}</section>
 <section id="score-actions"><h2>十四、得分补强行动清单</h2><div class="card-list"><article class="info-card"><div class="card-head"><span class="badge fatal">立即处理</span><label class="check"><input type="checkbox"> 完成</label></div><h3>合规与星号条款复核</h3><p>关联评分/风险项：废标条款、资格审查、重要技术条款。补强动作：逐条核验响应表、保证金、授权、签字盖章和报价上限。</p></article><article class="info-card"><div class="card-head"><span class="badge warn">高收益补强</span><label class="check"><input type="checkbox"> 完成</label></div><h3>功能截图与评分证据</h3><p>关联评分项：技术功能、检测能力、SBOM、镜像、组件库、包管理器。补强动作：按评分项建立截图索引，补齐可核验页面截图。</p></article><article class="info-card"><div class="card-head"><span class="badge warn">中收益补强</span><label class="check"><input type="checkbox"> 完成</label></div><h3>方案章节完整度</h3><p>关联评分项：平台部署、运维、后期运营、应急响应。补强动作：补充场景化说明、实施计划、服务承诺和应急流程。</p></article><article class="info-card"><div class="card-head"><span class="badge ok">可选择</span><label class="check"><input type="checkbox"> 完成</label></div><h3>低确定性分值</h3><p>关联评分项：依赖主观评价或外部报价的分值。处理建议：标注假设，交由人工结合竞争态势决策。</p></article></div></section>
 <section id="advice"><h2>十五、综合分析与建议</h2><div class="card-list"><article class="info-card"><h3>先保合规</h3><p>优先核验废标条款、资格门槛、星号条款、保证金、签字盖章和报价上限。</p></article><article class="info-card"><h3>再补得分</h3><p>围绕评分项逐条补齐截图、证书、承诺、功能说明和评分索引，避免“有能力但无证明”。</p></article></div><blockquote>本报告由 AI 辅助生成，所有关键条款请以招标文件原文为准，建议人工复核后使用。</blockquote></section>
 </main></div><script>{js}</script></body></html>"""
+
+
+def archive_report(project_id: str, report_path: Path, analyze_type: str, engine: str | None) -> str:
+    """把当前报告按时间戳归档，返回归档后的文件名。"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_name = f"report_{timestamp}.html"
+    archive_path = report_path.parent / archive_name
+    if report_path.exists():
+        shutil.copy2(report_path, archive_path)
+    add_report(
+        project_id=project_id,
+        filename=archive_name,
+        stored_name=archive_name,
+        analyze_type=analyze_type,
+        engine=engine,
+        size=archive_path.stat().st_size if archive_path.exists() else 0,
+    )
+    return archive_name
 
 
 def analyze_project(project_id: str, analyze_type: str = "general") -> None:
@@ -382,6 +572,7 @@ def analyze_project(project_id: str, analyze_type: str = "general") -> None:
         if analyze_type == "advanced" and is_full_bidding_analyst_candidate(files):
             summary = run_full_bidding_analyst_core(project_id, files, report_path)
             if summary:
+                archive_report(project_id, report_path, "advanced", summary.get("engine"))
                 zip_path = reports_dir / "result-package.zip"
                 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                     zf.write(report_path, "analysis-report.html")
@@ -402,6 +593,7 @@ def analyze_project(project_id: str, analyze_type: str = "general") -> None:
             raise ValueError("未能从上传文件中解析出文本，请确认文件格式为 docx、pdf、txt 或 md。")
         summary = build_summary(project_id, files, extracted)
         report_path.write_text(render_report(summary, files), encoding="utf-8")
+        archive_report(project_id, report_path, "general", "keyword-extract")
         zip_path = reports_dir / "result-package.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(report_path, "analysis-report.html")

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · BidScope</title>
+  <link rel="icon" href="data:,">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --google-blue: #1a73e8;
+      --google-blue-hover: #1557b0;
+      --google-red: #d93025;
+      --text: #202124;
+      --muted: #5f6368;
+      --line: #dadce0;
+      --bg: #f8fbff;
+      --card: #ffffff;
+      --error-bg: #fce8e6;
+    }
+    body {
+      font-family: -apple-system, "Google Sans", "Roboto", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(60, 64, 67, 0.12), 0 4px 8px rgba(60, 64, 67, 0.08);
+      width: 100%;
+      max-width: 400px;
+      padding: 40px 36px 32px;
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .logo-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--google-blue), #4285f4);
+      color: #fff;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 16px;
+    }
+    .logo h1 {
+      font-size: 24px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .logo p {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .form-group input {
+      width: 100%;
+      height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 14px;
+      font-size: 15px;
+      color: var(--text);
+      background: #fff;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+    .form-group input:focus {
+      border-color: var(--google-blue);
+      border-width: 2px;
+      padding: 0 13px;
+      box-shadow: 0 0 0 1px var(--google-blue);
+    }
+    .btn-login {
+      width: 100%;
+      height: 48px;
+      border: none;
+      border-radius: 8px;
+      background: var(--google-blue);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, box-shadow 0.2s;
+      margin-top: 8px;
+    }
+    .btn-login:hover { background: var(--google-blue-hover); box-shadow: 0 1px 3px rgba(26, 115, 232, 0.3); }
+    .btn-login:active { background: #1557b0; }
+    .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error-msg {
+      background: var(--error-bg);
+      color: var(--google-red);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .error-msg.show { display: block; }
+    .trial-notice {
+      margin-top: 20px;
+      padding: 12px 14px;
+      background: #e8f0fe;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #3c4043;
+      line-height: 1.6;
+      text-align: center;
+    }
+    .trial-notice strong { color: var(--google-blue); }
+    .footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="logo">
+      <div class="logo-icon">B</div>
+      <h1>登录 BidScope</h1>
+      <p>标书分析工作台</p>
+    </div>
+    <div class="error-msg" id="errorMsg"></div>
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="username">账号</label>
+        <input type="text" id="username" name="username" autocomplete="username" autofocus placeholder="请输入账号">
+      </div>
+      <div class="form-group">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" placeholder="请输入密码">
+      </div>
+      <button type="submit" class="btn-login" id="loginBtn">登录</button>
+    </form>
+    <div class="trial-notice">
+      <strong>试用阶段</strong>　目前仅限邀请用户使用，注册功能将在正式版中开放。
+    </div>
+    <div class="footer">BidScope · 智能标书分析平台</div>
+  </div>
+  <script>
+    const form = document.getElementById("loginForm");
+    const errorMsg = document.getElementById("errorMsg");
+    const loginBtn = document.getElementById("loginBtn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+      if (!username || !password) {
+        errorMsg.textContent = "请输入账号和密码。";
+        errorMsg.classList.add("show");
+        return;
+      }
+      loginBtn.disabled = true;
+      loginBtn.textContent = "登录中...";
+      errorMsg.classList.remove("show");
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        if (res.ok) {
+          window.location.href = "/";
+        } else {
+          const data = await res.json();
+          errorMsg.textContent = data.detail || "账号或密码错误，请重试。";
+          errorMsg.classList.add("show");
+        }
+      } catch (err) {
+        errorMsg.textContent = "网络错误，请检查连接后重试。";
+        errorMsg.classList.add("show");
+      }
+      loginBtn.disabled = false;
+      loginBtn.textContent = "登录";
+    });
+  </script>
+</body>
+</html>

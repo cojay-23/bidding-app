@@ -55,6 +55,21 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                stored_name TEXT NOT NULL,
+                analyze_type TEXT NOT NULL,
+                engine TEXT,
+                size INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
 
 
 def row_to_project(row: sqlite3.Row) -> dict[str, Any]:
@@ -136,3 +151,30 @@ def stored_file_path(project_id: str, stored_name: str) -> Path:
     from .config import PROJECTS_DIR
 
     return PROJECTS_DIR / project_id / "uploads" / stored_name
+
+
+def add_report(project_id: str, filename: str, stored_name: str,
+               analyze_type: str, engine: str | None, size: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO reports (project_id, filename, stored_name, analyze_type, engine, size, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, filename, stored_name, analyze_type, engine, size, now_iso()),
+        )
+
+
+def list_reports(project_id: str) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM reports WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def report_stored_path(project_id: str, stored_name: str) -> Path:
+    from .config import PROJECTS_DIR
+
+    return PROJECTS_DIR / project_id / "reports" / stored_name

@@ -312,12 +312,43 @@
     }
     th { color: var(--muted); background: #f8fbff; font-size: 13px; }
     .file-toolbar {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
-      gap: 10px;
-      align-items: end;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
       margin-top: 12px;
     }
+    .file-upload-zone {
+      position: relative;
+      border: 2px dashed var(--line);
+      border-radius: 14px;
+      padding: 32px 20px;
+      text-align: center;
+      background: linear-gradient(135deg, #fafbff 0%, #f5f8ff 100%);
+      cursor: pointer;
+      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+    .file-upload-zone:hover,
+    .file-upload-zone.drag-over {
+      border-color: var(--blue);
+      background: linear-gradient(135deg, #f0f5ff 0%, #eaf0fe 100%);
+      box-shadow: 0 4px 16px rgba(26,115,232,.10);
+    }
+    .file-upload-zone.has-files { border-style: solid; border-color: #b8d1ff; background: #fff; }
+    .upload-icon {
+      width: 52px; height: 52px; margin: 0 auto 14px;
+      display: grid; place-items: center;
+      border-radius: 14px; background: var(--blue-soft); color: var(--blue);
+      font-size: 24px; font-weight: 700; line-height: 1;
+    }
+    .upload-title { margin-bottom: 6px; font-size: 15px; font-weight: 650; color: var(--text); }
+    .upload-hint { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .upload-types { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+    .upload-types span {
+      padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      background: #eef2f7; color: var(--muted);
+    }
+    .file-input-hidden { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .upload-actions { display: flex; gap: 10px; justify-content: flex-start; margin-top: 18px; }
     .file-list {
       display: grid;
       gap: 10px;
@@ -333,6 +364,24 @@
       border-radius: 12px;
       background: #fff;
     }
+    .file-icon {
+      width: 40px; height: 40px; flex-shrink: 0;
+      display: grid; place-items: center;
+      border-radius: 9px; position: relative;
+      font-size: 9px; font-weight: 700; letter-spacing: .2px;
+    }
+    .file-icon svg { width: 100%; height: 100%; }
+    .file-icon .ext-tag {
+      position: absolute; bottom: -3px; right: -3px;
+      background: #fff; border: 1px solid var(--line);
+      border-radius: 4px; padding: 1px 4px; font-size: 9px;
+      font-weight: 700; color: var(--text);
+    }
+    .file-icon-docx { background: #e8f0fe; color: #1a56c4; }
+    .file-icon-pdf { background: #fce8e6; color: #c5221f; }
+    .file-icon-txt { background: #e6f4ea; color: #137333; }
+    .file-icon-md { background: #fef7e0; color: #b06000; }
+    .file-icon-default { background: #eef2f7; color: #5f6368; }
     .file-card strong {
       display: block;
       overflow-wrap: anywhere;
@@ -411,6 +460,7 @@
         <div class="top-actions">
           <button id="createToggle">新建项目</button>
           <button class="secondary" id="refreshBtn">刷新</button>
+          <button class="secondary" id="logoutBtn" style="color:#d93025;">退出登录</button>
         </div>
       </div>
 
@@ -459,6 +509,21 @@
     </section>
   </div>
 
+  <div class="modal-backdrop" id="historyModal" aria-hidden="true">
+    <section class="create-panel" role="dialog" aria-modal="true" aria-labelledby="historyTitle" style="width:min(640px,100%);max-height:80vh;overflow:auto;">
+      <div class="modal-head">
+        <div>
+          <h2 id="historyTitle">历史报告</h2>
+          <p>选择要查看或下载的检测报告版本。</p>
+        </div>
+        <button type="button" class="secondary" id="historyClose">关闭</button>
+      </div>
+      <div id="historyList" style="display:grid;gap:10px;">
+        <p class="muted">加载中...</p>
+      </div>
+    </section>
+  </div>
+
   <div class="modal-backdrop" id="analyzeModal" aria-hidden="true">
     <section class="create-panel" role="dialog" aria-modal="true" aria-labelledby="analyzeTitle">
       <div class="modal-head">
@@ -469,8 +534,8 @@
         <button type="button" class="secondary" id="analyzeClose">关闭</button>
       </div>
       <div class="create-grid">
-        <button type="button" class="secondary" id="btnGeneralAnalyze">通用分析</button>
-        <button type="button" id="btnAdvancedAnalyze">高级分析 (bidding-analyst-core)</button>
+        <button type="button" class="secondary" id="btnGeneralAnalyze">通用分析（快速）</button>
+        <button type="button" id="btnAdvancedAnalyze">高级分析（大模型深度分析）</button>
       </div>
       <p class="message" id="analyzeMsg"></p>
     </section>
@@ -483,6 +548,8 @@
       files: id => `/api/projects/${id}/files`,
       analyze: id => `/api/projects/${id}/analyze`,
       report: id => `/api/projects/${id}/report`,
+      reports: id => `/api/projects/${id}/reports`,
+      reportById: (id, rid) => `/api/projects/${id}/reports/${rid}`,
       download: id => `/api/projects/${id}/download`,
     };
     let projects = [];
@@ -608,12 +675,17 @@
       renderFileManagement(project);
       document.getElementById("deleteBtn").addEventListener("click", deleteSelectedProject);
       artifacts.innerHTML = project.status === "done"
-        ? `<a class="button" href="${api.report(project.id)}" target="_blank">查看完整报告</a><a class="button secondary" href="${api.download(project.id)}">下载结果包</a>`
+        ? `<button class="button" id="viewReportBtn">查看完整报告</button><button class="button secondary" id="historyBtn">历史报告</button>`
         : '<button class="secondary" disabled>分析完成后可查看报告</button>';
+      if (project.status === "done") {
+        document.getElementById("viewReportBtn").addEventListener("click", () => openReportPreview(project.id));
+        document.getElementById("historyBtn").addEventListener("click", () => openHistoryPanel(project.id));
+      }
     }
 
     function renderFileManagement(project) {
       const detail = document.getElementById("detail");
+      const fileCount = project.files?.length || 0;
       detail.insertAdjacentHTML("beforeend", `
         <div class="divider"></div>
         <section class="file-management">
@@ -624,12 +696,25 @@
             </div>
           </div>
           <form id="uploadForm" class="file-toolbar">
-            <div>
-              <label for="files">选择文件</label>
-              <input id="files" name="files" type="file" multiple accept=".docx,.pdf,.txt,.md">
+            <div class="file-upload-zone${fileCount > 0 ? ' has-files' : ''}" id="uploadZone">
+              <input id="files" name="files" type="file" multiple accept=".docx,.pdf,.txt,.md" class="file-input-hidden">
+              ${fileCount > 0 ? `
+                <div class="upload-icon">+</div>
+                <div class="upload-title">继续上传文件</div>
+                <div class="upload-hint">已上传 ${fileCount} 个文件，点击或拖拽添加更多</div>
+              ` : `
+                <div class="upload-icon">↑</div>
+                <div class="upload-title">点击选择或拖拽文件到此处</div>
+                <div class="upload-hint">支持招标文件（.docx / .pdf）和方案材料，可多选</div>
+              `}
+              <div class="upload-types">
+                <span>.docx</span><span>.pdf</span><span>.txt</span><span>.md</span>
+              </div>
             </div>
-            <button>上传文件</button>
-            <button type="button" class="secondary" id="analyzeBtn">开始分析</button>
+            <div class="upload-actions">
+              <button type="submit" id="submitUploadBtn" ${!selectedId ? 'disabled' : ''}>上传文件</button>
+              <button type="button" class="secondary" id="analyzeBtn" ${!selectedId ? 'disabled' : ''}>开始分析</button>
+            </div>
           </form>
           <p class="message" id="detailMsg">${project.error ? "错误：" + escapeHtml(project.error) : ""}</p>
           <div class="divider"></div>
@@ -637,21 +722,66 @@
           ${renderFileTable(project.files || [])}
         </section>
       `);
-      document.getElementById("uploadForm").addEventListener("submit", uploadFiles);
+      const form = document.getElementById("uploadForm");
+      const zone = document.getElementById("uploadZone");
+      const filesInput = document.getElementById("files");
+
+      // drag-and-drop
+      ["dragenter","dragover"].forEach(evt => {
+        zone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add("drag-over"); });
+      });
+      ["dragleave","drop"].forEach(evt => {
+        zone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); zone.classList.remove("drag-over"); });
+      });
+      zone.addEventListener("drop", e => {
+        if (e.dataTransfer.files.length) {
+          filesInput.files = e.dataTransfer.files;
+          zone.classList.add("has-files");
+          updateUploadZoneLabel(e.dataTransfer.files);
+        }
+      });
+
+      function updateUploadZoneLabel(fileList) {
+        const count = fileList?.length || filesInput.files?.length || 0;
+        if (count > 0) {
+          const names = Array.from(filesInput.files).map(f => f.name).join(", ");
+          zone.querySelector(".upload-title").textContent = `已选择 ${count} 个文件`;
+          zone.querySelector(".upload-hint").textContent = names;
+          zone.classList.add("has-files");
+        }
+      }
+      filesInput.addEventListener("change", () => updateUploadZoneLabel());
+
+      form.addEventListener("submit", uploadFiles);
       document.getElementById("analyzeBtn").addEventListener("click", openAnalyzePanel);
     }
 
     function renderFileTable(files) {
-      if (!files.length) return '<p class="muted">还没有上传文件。</p>';
-      return `<div class="file-list">${files.map(file => `
+      if (!files.length) return '<div class="empty" style="min-height:120px;padding:20px;border-radius:10px;">还没有上传文件。</div>';
+      const iconSvgs = {
+        docx: `<svg viewBox="0 0 32 32" fill="none"><path d="M8 3h12l6 6v20H8z" fill="#fff" stroke="#1a56c4" stroke-width="1.5"/><path d="M20 3v6h6" stroke="#1a56c4" stroke-width="1.5" fill="none"/><text x="16" y="22" text-anchor="middle" font-size="7" font-weight="700" fill="#1a56c4" font-family="sans-serif">DOCX</text></svg>`,
+        pdf: `<svg viewBox="0 0 32 32" fill="none"><path d="M8 3h12l6 6v20H8z" fill="#fff" stroke="#c5221f" stroke-width="1.5"/><path d="M20 3v6h6" stroke="#c5221f" stroke-width="1.5" fill="none"/><text x="16" y="22" text-anchor="middle" font-size="8" font-weight="700" fill="#c5221f" font-family="sans-serif">PDF</text></svg>`,
+        txt: `<svg viewBox="0 0 32 32" fill="none"><path d="M8 3h12l6 6v20H8z" fill="#fff" stroke="#137333" stroke-width="1.5"/><path d="M20 3v6h6" stroke="#137333" stroke-width="1.5" fill="none"/><text x="16" y="22" text-anchor="middle" font-size="8" font-weight="700" fill="#137333" font-family="sans-serif">TXT</text></svg>`,
+        md: `<svg viewBox="0 0 32 32" fill="none"><path d="M8 3h12l6 6v20H8z" fill="#fff" stroke="#b06000" stroke-width="1.5"/><path d="M20 3v6h6" stroke="#b06000" stroke-width="1.5" fill="none"/><text x="16" y="22" text-anchor="middle" font-size="8" font-weight="700" fill="#b06000" font-family="sans-serif">MD</text></svg>`,
+        default: `<svg viewBox="0 0 32 32" fill="none"><path d="M8 3h12l6 6v20H8z" fill="#fff" stroke="#5f6368" stroke-width="1.5"/><path d="M20 3v6h6" stroke="#5f6368" stroke-width="1.5" fill="none"/><circle cx="16" cy="19" r="3" fill="#5f6368"/></svg>`
+      };
+      return `<div class="file-list">${files.map(file => {
+        const ext = file.filename.split(".").pop().toLowerCase() || "";
+        const iconClass = `file-icon-${["docx","pdf","txt","md"].includes(ext) ? ext : "default"}`;
+        const svg = iconSvgs[ext] || iconSvgs.default;
+        const sizeKB = file.size > 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${file.size} B`;
+        return `
         <article class="file-card">
-          <div>
-            <strong>${escapeHtml(file.filename)}</strong>
-            <span>${file.size} Byte · 上传于 ${formatTime(file.uploaded_at)}</span>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="file-icon ${iconClass}">${svg}</div>
+            <div style="min-width:0;flex:1;">
+              <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">${escapeHtml(file.filename)}</strong>
+              <span>${sizeKB} · ${formatTime(file.uploaded_at)}</span>
+            </div>
           </div>
           <span class="status done">已保存</span>
-        </article>
-      `).join("")}</div>`;
+        </article>`;
+      }).join("")}</div>`;
     }
 
     async function uploadFiles(event) {
@@ -675,6 +805,12 @@
 
     function openAnalyzePanel() {
       if (!selectedId) return;
+      const project = projects.find(p => p.id === selectedId);
+      const fileCount = project?.files?.length || 0;
+      if (fileCount === 0) {
+        document.getElementById("detailMsg").textContent = "请先上传文件，再开始分析。";
+        return;
+      }
       const modal = document.getElementById("analyzeModal");
       modal.classList.add("open");
       modal.setAttribute("aria-hidden", "false");
@@ -750,10 +886,82 @@
       if (event.target.id === "createModal") closeCreatePanel();
     });
     document.addEventListener("keydown", event => {
-      if (event.key === "Escape") closeCreatePanel();
+      if (event.key === "Escape") { closeCreatePanel(); closeHistoryPanel(); }
     });
+    document.getElementById("historyClose").addEventListener("click", closeHistoryPanel);
+    document.getElementById("historyModal").addEventListener("click", event => {
+      if (event.target.id === "historyModal") closeHistoryPanel();
+    });
+    function openReportPreview(projectId) {
+      window.open(api.report(projectId), "_blank");
+    }
+
+    async function openHistoryPanel(projectId) {
+      const modal = document.getElementById("historyModal");
+      const list = document.getElementById("historyList");
+      modal.classList.add("open");
+      modal.setAttribute("aria-hidden", "false");
+      list.innerHTML = '<p class="muted">加载中...</p>';
+      try {
+        const res = await fetch(api.reports(projectId));
+        const reports = await res.json();
+        if (!reports.length) {
+          list.innerHTML = '<p class="muted">暂无历史报告。</p>';
+          return;
+        }
+        list.innerHTML = reports.map(r => {
+          const typeLabel = r.analyze_type === "advanced" ? "高级分析" : "通用分析";
+          const engineLabel = r.engine === "llm-moonshot" ? " · Kimi" : r.engine === "keyword-extract" ? " · 关键词" : r.engine ? ` · ${r.engine}` : "";
+          const sizeKB = r.size > 1024 ? `${(r.size / 1024).toFixed(1)} KB` : `${r.size} B`;
+          return `
+          <div class="file-card" style="grid-template-columns:minmax(0,1fr) auto;align-items:center;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div class="file-icon file-icon-default">
+                <svg viewBox="0 0 32 32" fill="none"><path d="M8 3h12l6 6v20H8z" fill="#fff" stroke="#5f6368" stroke-width="1.5"/><path d="M20 3v6h6" stroke="#5f6368" stroke-width="1.5" fill="none"/><text x="16" y="22" text-anchor="middle" font-size="7" font-weight="700" fill="#5f6368" font-family="sans-serif">HTML</text></svg>
+              </div>
+              <div style="min-width:0;flex:1;">
+                <strong>${typeLabel}${engineLabel}</strong>
+                <span>${formatTime(r.created_at)} · ${sizeKB}</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <a class="button secondary" href="${api.reportById(projectId, r.id)}" target="_blank" style="min-height:34px;padding:0 12px;">查看</a>
+              <a class="button secondary" href="${api.reportById(projectId, r.id)}" download="${r.filename}" style="min-height:34px;padding:0 12px;">下载</a>
+            </div>
+          </div>`;
+        }).join("");
+      } catch (err) {
+        list.innerHTML = '<p class="muted">加载失败。</p>';
+      }
+    }
+
+    function closeHistoryPanel() {
+      const modal = document.getElementById("historyModal");
+      modal.classList.remove("open");
+      modal.setAttribute("aria-hidden", "true");
+    }
+
     document.getElementById("refreshBtn").addEventListener("click", () => loadProjects(true));
-    loadProjects(false);
+    document.getElementById("btnGeneralAnalyze").addEventListener("click", () => startAnalyze("general"));
+    document.getElementById("btnAdvancedAnalyze").addEventListener("click", () => startAnalyze("advanced"));
+
+    // 退出登录
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST" });
+      window.location.href = "/login";
+    });
+
+    // 启动时检查登录态
+    (async () => {
+      try {
+        const res = await fetch("/api/me");
+        if (!res.ok) { window.location.href = "/login"; return; }
+        const data = await res.json();
+        loadProjects(false);
+      } catch {
+        window.location.href = "/login";
+      }
+    })();
   </script>
 </body>
 </html>
