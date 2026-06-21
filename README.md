@@ -81,7 +81,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-访问 [http://localhost:8000](http://localhost:8000)，默认账号 `admin`，密码 `dJSK2o91D*`。
+访问 [http://localhost:8000](http://localhost:8000)，默认账号 `admin`，密码 `XXXXXX`。
 
 ### 4. 使用流程
 
