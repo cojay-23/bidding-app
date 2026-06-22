@@ -5,3 +5,5 @@ data/app.db
 data/projects/
 .DS_Store
 .env
+*.tar.gz
+*.zip
