@@ -52,21 +52,34 @@ PRICE_WORDS = ("预算", "最高投标限价", "投标报价", "保证金", "价
 
 
 def is_full_bidding_analyst_candidate(files: list[dict[str, Any]]) -> bool:
-    names = [file["filename"].lower() for file in files]
-    return any("招标" in name and name.endswith(".docx") for name in names)
+    supported_suffixes = {".docx", ".pdf", ".txt", ".md"}
+    return any(Path(file["filename"].lower()).suffix in supported_suffixes for file in files)
 
 
 def pick_full_core_inputs(project_id: str, files: list[dict[str, Any]]) -> tuple[Path, Path | None] | None:
+    supported_suffixes = {".docx", ".pdf", ".txt", ".md"}
     tender: Path | None = None
     sca: Path | None = None
     for file in files:
         name = file["filename"].lower()
         path = stored_file_path(project_id, file["stored_name"])
-        if "招标" in name and name.endswith(".docx") and tender is None:
+        suffix = Path(name).suffix
+        if suffix not in supported_suffixes:
+            continue
+        if "招标" in name and tender is None:
             tender = path
-        elif name.endswith(".docx") and "招标" not in name and sca is None:
+        elif sca is None:
             sca = path
+    if tender is None and files:
+        for file in files:
+            name = file["filename"].lower()
+            suffix = Path(name).suffix
+            if suffix in supported_suffixes:
+                tender = stored_file_path(project_id, file["stored_name"])
+                break
     if tender:
+        if sca == tender:
+            sca = None
         return tender, sca
     return None
 
@@ -91,12 +104,12 @@ def run_full_bidding_analyst_core(project_id: str, files: list[dict[str, Any]], 
         timeout=600,
     )
     if result.returncode != 0:
-        # 记录详细错误到日志，但只返回通用错误消息给调用方
         error_detail = (result.stderr or result.stdout or "").strip()
-        # 截断以防止日志膨胀
-        if len(error_detail) > 500:
-            error_detail = error_detail[:500] + "..."
-        raise RuntimeError(f"bidding-analyst 内核运行失败。详情已记录，请联系管理员。")
+        if not error_detail:
+            error_detail = "大模型分析进程异常退出，未返回错误详情。"
+        if len(error_detail) > 1200:
+            error_detail = error_detail[:1200] + "..."
+        raise RuntimeError(f"bidding-analyst 内核运行失败：{error_detail}")
     try:
         summary = json.loads(result.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -574,18 +587,21 @@ def analyze_project(project_id: str, analyze_type: str = "general") -> None:
     try:
         files = list_files(project_id)
         report_path = reports_dir / "analysis-report.html"
-        if analyze_type == "advanced" and is_full_bidding_analyst_candidate(files):
+        if analyze_type == "advanced":
+            if not is_full_bidding_analyst_candidate(files):
+                raise ValueError("高级分析需要至少上传一个可解析文件（docx、pdf、txt 或 md）。")
             summary = run_full_bidding_analyst_core(project_id, files, report_path)
-            if summary:
-                archive_report(project_id, report_path, "advanced", summary.get("engine"))
-                zip_path = reports_dir / "result-package.zip"
-                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                    zf.write(report_path, "analysis-report.html")
-                    for upload_file in (project_dir / "uploads").glob("*"):
-                        if upload_file.is_file():
-                            zf.write(upload_file, f"uploads/{upload_file.name}")
-                update_project(project_id, status="done", summary=summary, report_path=str(report_path), error=None)
-                return
+            if not summary:
+                raise RuntimeError("高级分析未能生成报告，请检查上传文件是否可解析。")
+            archive_report(project_id, report_path, "advanced", summary.get("engine"))
+            zip_path = reports_dir / "result-package.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(report_path, "analysis-report.html")
+                for upload_file in (project_dir / "uploads").glob("*"):
+                    if upload_file.is_file():
+                        zf.write(upload_file, f"uploads/{upload_file.name}")
+            update_project(project_id, status="done", summary=summary, report_path=str(report_path), error=None)
+            return
 
         extracted: dict[str, str] = {}
         for file in files:

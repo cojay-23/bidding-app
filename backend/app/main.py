@@ -239,7 +239,7 @@ def api_list_reports(project_id: str, _: str = Depends(require_auth)) -> list[di
 
 
 @app.get("/api/projects/{project_id}/reports/{report_id}")
-def api_get_report(project_id: str, report_id: str, _: str = Depends(require_auth)) -> FileResponse:
+def api_get_report(project_id: str, report_id: str, download: bool = Query(False), _: str = Depends(require_auth)) -> FileResponse:
     reports = list_reports(project_id)
     target = next((r for r in reports if str(r["id"]) == report_id), None)
     if not target:
@@ -247,7 +247,9 @@ def api_get_report(project_id: str, report_id: str, _: str = Depends(require_aut
     path = report_stored_path(project_id, target["stored_name"])
     if not path.exists():
         raise HTTPException(status_code=404, detail="报告文件已丢失")
-    return FileResponse(path, media_type="text/html; charset=utf-8", filename=target["filename"])
+    if download:
+        return FileResponse(path, media_type="text/html; charset=utf-8", filename=target["filename"])
+    return FileResponse(path, media_type="text/html; charset=utf-8")
 
 
 @app.get("/api/projects/{project_id}/download")

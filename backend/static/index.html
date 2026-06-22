@@ -459,7 +459,6 @@
         </div>
         <div class="top-actions">
           <button id="createToggle">新建项目</button>
-          <button class="secondary" id="refreshBtn">刷新</button>
           <button class="secondary" id="logoutBtn" style="color:#d93025;">退出登录</button>
         </div>
       </div>
@@ -502,7 +501,7 @@
         </div>
         <div class="row" style="justify-content:flex-end;">
           <button type="button" class="secondary" id="createCancel">取消</button>
-          <button>创建</button>
+          <button id="createSubmitBtn">创建</button>
         </div>
       </form>
       <p class="message" id="createMsg"></p>
@@ -581,6 +580,8 @@
     // 安全的 fetch 封装：非安全方法自动添加 CSRF token
     async function safeFetch(url, options = {}) {
       const method = (options.method || "GET").toUpperCase();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20000);
       if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
         await ensureCsrfToken();
         options.headers = options.headers || {};
@@ -592,7 +593,11 @@
           }
         }
       }
-      return fetch(url, options);
+      try {
+        return await fetch(url, { ...options, signal: options.signal || controller.signal });
+      } finally {
+        window.clearTimeout(timeout);
+      }
     }
 
     function statusLabel(status) {
@@ -903,18 +908,39 @@
       }, 1800);
     }
 
+    async function responseMessage(res, fallback) {
+      try {
+        const data = await res.json();
+        return data.detail || data.error || fallback;
+      } catch (e) {
+        return fallback;
+      }
+    }
+
     document.getElementById("createForm").addEventListener("submit", async event => {
       event.preventDefault();
       const form = new FormData();
+      const submitBtn = document.getElementById("createSubmitBtn");
       form.append("name", document.getElementById("projectName").value || "未命名标书分析项目");
       setMessage("createMsg", "正在创建...");
-      const res = await safeFetch(api.projects, { method: "POST", body: form });
-      const project = await res.json();
-      selectedId = project.id;
-      document.getElementById("projectName").value = "";
-      setMessage("createMsg", "项目已创建。");
-      closeCreatePanel();
-      await loadProjects(true);
+      submitBtn.disabled = true;
+      try {
+        const res = await safeFetch(api.projects, { method: "POST", body: form });
+        if (!res.ok) {
+          setMessage("createMsg", await responseMessage(res, "创建失败，请稍后重试。"));
+          return;
+        }
+        const project = await res.json();
+        selectedId = project.id;
+        document.getElementById("projectName").value = "";
+        setMessage("createMsg", "项目已创建。");
+        closeCreatePanel();
+        await loadProjects(true);
+      } catch (e) {
+        setMessage("createMsg", "创建请求没有完成，请检查网络或重新登录。");
+      } finally {
+        submitBtn.disabled = false;
+      }
     });
 
     document.getElementById("createToggle").addEventListener("click", openCreatePanel);
@@ -925,7 +951,11 @@
       if (event.target.id === "createModal") closeCreatePanel();
     });
     document.addEventListener("keydown", event => {
-      if (event.key === "Escape") { closeCreatePanel(); closeHistoryPanel(); }
+      if (event.key === "Escape") { closeCreatePanel(); closeHistoryPanel(); closeAnalyzePanel(); }
+    });
+    document.getElementById("analyzeClose").addEventListener("click", closeAnalyzePanel);
+    document.getElementById("analyzeModal").addEventListener("click", event => {
+      if (event.target.id === "analyzeModal") closeAnalyzePanel();
     });
     document.getElementById("historyClose").addEventListener("click", closeHistoryPanel);
     document.getElementById("historyModal").addEventListener("click", event => {
@@ -965,7 +995,7 @@
             </div>
             <div style="display:flex;gap:8px;">
               <a class="button secondary" href="${api.reportById(projectId, r.id)}" target="_blank" style="min-height:34px;padding:0 12px;">查看</a>
-              <a class="button secondary" href="${api.reportById(projectId, r.id)}" download="${r.filename}" style="min-height:34px;padding:0 12px;">下载</a>
+              <a class="button secondary" href="${api.reportById(projectId, r.id)}?download=1" download="${r.filename}" style="min-height:34px;padding:0 12px;">下载</a>
             </div>
           </div>`;
         }).join("");
@@ -980,7 +1010,6 @@
       modal.setAttribute("aria-hidden", "true");
     }
 
-    document.getElementById("refreshBtn").addEventListener("click", () => loadProjects(true));
     document.getElementById("btnGeneralAnalyze").addEventListener("click", () => startAnalyze("general"));
     document.getElementById("btnAdvancedAnalyze").addEventListener("click", () => startAnalyze("advanced"));
 

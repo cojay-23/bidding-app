@@ -1,6 +1,9 @@
 services:
   bidding-app:
-    build: .
+    build:
+      context: .
+      args:
+        PYTHON_BASE_IMAGE: public.ecr.aws/docker/library/python:3.12-slim
     container_name: bidding-app
     ports:
       - "8000:8000"
