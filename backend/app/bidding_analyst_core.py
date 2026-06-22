@@ -20,6 +20,7 @@ import re
 import sys
 from pathlib import Path
 
+import bleach
 from docx import Document
 from openai import OpenAI
 from pypdf import PdfReader
@@ -277,6 +278,7 @@ def extract_summary(html: str) -> dict:
 
 
 def ensure_html(raw: str) -> str:
+    raw = sanitize_html(raw)
     raw = raw.strip()
     if raw.startswith("<!doctype") or raw.startswith("<!DOCTYPE"):
         return raw
@@ -286,6 +288,121 @@ def ensure_html(raw: str) -> str:
 
     # 如果 LLM 输出的是纯文本或 Markdown，包装成基础 HTML
     return f"<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><style>body{{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;max-width:960px;margin:20px auto;padding:0 20px;line-height:1.65;color:#333}}h2{{border-bottom:2px solid #1a73e8;padding-bottom:6px;margin-top:32px}}.risk{{background:#fff5f5;border-left:4px solid #d93025;padding:12px 16px;margin:10px 0;border-radius:6px}}pre,code{{background:#f5f5f5;padding:2px 5px;border-radius:3px;font-size:.9em}}</style></head><body>{raw}</body></html>"
+
+
+def sanitize_html(html_content: str) -> str:
+    """使用 bleach 清洗 HTML，移除 XSS 攻击向量。
+
+    只允许安全的标签、属性和 CSS 属性。移除 script、事件处理器、危险 URL 等。
+    """
+    allowed_tags = {
+        "html", "head", "body", "meta", "title", "link", "style",
+        "h1", "h2", "h3", "h4", "h5", "h6",
+        "p", "br", "hr", "blockquote", "pre", "code",
+        "ul", "ol", "li", "dl", "dt", "dd",
+        "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col",
+        "div", "span", "section", "article", "header", "footer", "nav", "aside", "main",
+        "a", "strong", "b", "em", "i", "u", "s", "small", "sub", "sup", "mark",
+        "img", "figure", "figcaption",
+        "details", "summary",
+        "label", "input", "button", "form",
+        "script",  # 仅允许 type="application/json" 用于数据嵌入
+        "style",
+    }
+
+    allowed_attrs = {
+        "*": ["class", "id", "style", "lang", "title", "dir"],
+        "a": ["href", "target", "rel"],
+        "img": ["src", "alt", "width", "height", "loading"],
+        "meta": ["charset", "name", "content"],
+        "link": ["rel", "href", "type"],
+        "td": ["colspan", "rowspan"],
+        "th": ["colspan", "rowspan", "scope"],
+        "input": ["type", "checked", "disabled"],
+        "label": ["for"],
+        "details": ["open"],
+        "summary": [],
+        "script": ["type", "id"],  # 仅允许 application/json 类型
+        "col": ["span"],
+        "colgroup": ["span"],
+    }
+
+    allowed_protocols = ["http", "https", "mailto"]
+
+    # CSS 白名单 — 允许布局和样式，禁止 expression() 和行为绑定
+    allowed_css = [
+        "color", "background-color", "background", "border", "border-color",
+        "border-radius", "border-left", "border-right", "border-top", "border-bottom",
+        "padding", "padding-left", "padding-right", "padding-top", "padding-bottom",
+        "margin", "margin-left", "margin-right", "margin-top", "margin-bottom",
+        "width", "max-width", "min-width", "height", "max-height", "min-height",
+        "font-family", "font-size", "font-weight", "font-style",
+        "line-height", "text-align", "text-decoration", "text-transform",
+        "letter-spacing", "word-spacing", "white-space",
+        "display", "position", "top", "right", "bottom", "left",
+        "overflow", "overflow-x", "overflow-y",
+        "box-shadow", "opacity", "visibility",
+        "cursor", "grid-template-columns", "grid-template-rows", "grid-gap", "gap",
+        "flex", "flex-direction", "flex-wrap", "justify-content", "align-items",
+        "align-self", "order",
+        "z-index", "transition", "transform",
+        "list-style", "content",
+        "scroll-behavior", "box-sizing",
+        "background-image", "background-size", "background-position", "background-repeat",
+        "border-collapse", "table-layout", "vertical-align",
+        "word-break", "word-wrap", "overflow-wrap", "text-overflow",
+        "outline", "resize",
+        "inset", "place-items", "object-fit",
+        "fill", "stroke", "stroke-width",
+        # CSS 变量和渐变
+        "linear-gradient", "radial-gradient",
+    ]
+
+    # 首先清洗 script 标签 — bleach 的清洗可能会保留 text content
+    # 我们先单独处理 script 标签
+    def _filter_scripts(attrs: dict, tags: set) -> dict | None:
+        """只允许 type="application/json" 的 script 标签。"""
+        if attrs.get("type", "") != "application/json":
+            return None  # 移除该标签
+        return attrs
+
+    cleaned = bleach.clean(
+        html_content,
+        tags=allowed_tags,
+        attributes=allowed_attrs,
+        protocols=allowed_protocols,
+        strip=True,
+        strip_comments=True,
+    )
+
+    # 使用 bleach.Cleaner 做更精细的清洗（CSS 过滤 + script 过滤）
+    cleaner = bleach.Cleaner(
+        tags=allowed_tags,
+        attributes=allowed_attrs,
+        protocols=allowed_protocols,
+        styles=allowed_css,
+        strip=True,
+        strip_comments=True,
+        filters=[_filter_scripts],
+    )
+    cleaned = cleaner.clean(html_content)
+
+    # 移除内联事件处理器（onclick, onload 等）—— bleach 6.x 默认应该做了
+    # 但为保险起见再跑一次正则清除
+    event_attrs = re.compile(
+        r'\bon[a-z]+\s*=\s*["\'][^"\']*["\']',
+        re.IGNORECASE,
+    )
+    cleaned = event_attrs.sub("", cleaned)
+
+    # 移除 javascript: 伪协议（bleach 应该已处理，冗余保护）
+    cleaned = re.sub(
+        r'(?i)href\s*=\s*["\']javascript:',
+        'href="#" data-removed="javascript-uri"',
+        cleaned,
+    )
+
+    return cleaned
 
 
 def ensure_html_closed(html: str) -> str:

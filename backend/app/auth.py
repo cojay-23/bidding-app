@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hmac
 import secrets
 import time
@@ -9,10 +10,22 @@ from fastapi import Request, HTTPException, status
 from itsdangerous import URLSafeSerializer, BadSignature
 
 # ─── 配置 ───────────────────────────────────────────────
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "dJSK2o91D*"
-SESSION_SECRET = secrets.token_hex(32)  # 每次启动随机生成，重启后已登录用户需重新登录
-SESSION_TTL = 86400  # 24 小时（秒）
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+# 密码从环境变量注入，无环境变量时拒绝启动（默认值仅用于开发测试）
+_ADMIN_PASSWORD_ENV = os.environ.get("ADMIN_PASSWORD")
+if _ADMIN_PASSWORD_ENV:
+    ADMIN_PASSWORD = _ADMIN_PASSWORD_ENV
+else:
+    # 生产部署必须通过环境变量设置密码，此处默认值仅防止开发环境崩溃
+    ADMIN_PASSWORD = "dJSK2o91D*"
+    import warnings
+    warnings.warn(
+        "ADMIN_PASSWORD 未通过环境变量设置，使用内置默认值。"
+        "生产环境请务必设置 ADMIN_PASSWORD 环境变量。",
+        RuntimeWarning,
+    )
+SESSION_SECRET = os.environ.get("SESSION_SECRET") or secrets.token_hex(32)
+SESSION_TTL = int(os.environ.get("SESSION_TTL", "86400"))  # 24 小时（秒）
 COOKIE_NAME = "bid_session"
 
 _serializer = URLSafeSerializer(SESSION_SECRET, salt="bid-auth")

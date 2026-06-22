@@ -10,3 +10,17 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    # 安全加固：降权 + 资源限制
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=128M,mode=1777
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 512M

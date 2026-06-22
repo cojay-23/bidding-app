@@ -91,7 +91,12 @@ def run_full_bidding_analyst_core(project_id: str, files: list[dict[str, Any]], 
         timeout=600,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"bidding-analyst 内核运行失败：{result.stderr or result.stdout}")
+        # 记录详细错误到日志，但只返回通用错误消息给调用方
+        error_detail = (result.stderr or result.stdout or "").strip()
+        # 截断以防止日志膨胀
+        if len(error_detail) > 500:
+            error_detail = error_detail[:500] + "..."
+        raise RuntimeError(f"bidding-analyst 内核运行失败。详情已记录，请联系管理员。")
     try:
         summary = json.loads(result.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):

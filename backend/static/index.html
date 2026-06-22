@@ -555,6 +555,45 @@
     let projects = [];
     let selectedId = null;
     let polling = null;
+    let csrfToken = null;
+
+    // 从 Cookie 读取 CSRF token
+    function getCsrfTokenFromCookie() {
+      const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+      return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    // 确保有 CSRF token（首次加载时从服务端获取）
+    async function ensureCsrfToken() {
+      csrfToken = getCsrfTokenFromCookie();
+      if (!csrfToken) {
+        try {
+          const res = await fetch("/api/csrf-token");
+          const data = await res.json();
+          csrfToken = data.csrf_token || getCsrfTokenFromCookie();
+        } catch (e) {
+          console.warn("无法获取 CSRF token");
+        }
+      }
+      return csrfToken;
+    }
+
+    // 安全的 fetch 封装：非安全方法自动添加 CSRF token
+    async function safeFetch(url, options = {}) {
+      const method = (options.method || "GET").toUpperCase();
+      if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+        await ensureCsrfToken();
+        options.headers = options.headers || {};
+        if (csrfToken) {
+          if (options.headers instanceof Headers) {
+            options.headers.set("X-CSRF-Token", csrfToken);
+          } else {
+            options.headers["X-CSRF-Token"] = csrfToken;
+          }
+        }
+      }
+      return fetch(url, options);
+    }
 
     function statusLabel(status) {
       const map = { draft: "待上传", running: "分析中", done: "已完成", failed: "失败" };
@@ -591,7 +630,7 @@
     }
 
     async function loadProjects(keepSelection = true) {
-      const res = await fetch(api.projects);
+      const res = await safeFetch(api.projects);
       projects = await res.json();
       if (!keepSelection || !projects.some(p => p.id === selectedId)) {
         selectedId = projects.find(p => p.status === "done")?.id || projects[0]?.id || null;
@@ -794,7 +833,7 @@
       const form = new FormData();
       for (const file of input.files) form.append("files", file);
       document.getElementById("detailMsg").textContent = "正在上传...";
-      const res = await fetch(api.files(selectedId), { method: "POST", body: form });
+      const res = await safeFetch(api.files(selectedId), { method: "POST", body: form });
       if (!res.ok) {
         document.getElementById("detailMsg").textContent = "上传失败。";
         return;
@@ -826,7 +865,7 @@
     async function startAnalyze(type) {
       if (!selectedId) return;
       document.getElementById("analyzeMsg").textContent = "已提交分析任务...";
-      const res = await fetch(`${api.analyze(selectedId)}?analyze_type=${type}`, { method: "POST" });
+      const res = await safeFetch(`${api.analyze(selectedId)}?analyze_type=${type}`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json();
         document.getElementById("analyzeMsg").textContent = err.detail || "分析启动失败。";
@@ -843,7 +882,7 @@
       if (!project) return;
       const ok = window.confirm(`确认删除项目“${project.name}”？本地上传文件和报告也会删除。`);
       if (!ok) return;
-      const res = await fetch(api.project(project.id), { method: "DELETE" });
+      const res = await safeFetch(api.project(project.id), { method: "DELETE" });
       if (!res.ok) {
         document.getElementById("detailMsg").textContent = "删除失败。";
         return;
@@ -869,7 +908,7 @@
       const form = new FormData();
       form.append("name", document.getElementById("projectName").value || "未命名标书分析项目");
       setMessage("createMsg", "正在创建...");
-      const res = await fetch(api.projects, { method: "POST", body: form });
+      const res = await safeFetch(api.projects, { method: "POST", body: form });
       const project = await res.json();
       selectedId = project.id;
       document.getElementById("projectName").value = "";
@@ -947,7 +986,7 @@
 
     // 退出登录
     document.getElementById("logoutBtn").addEventListener("click", async () => {
-      await fetch("/api/logout", { method: "POST" });
+      await safeFetch("/api/logout", { method: "POST" });
       window.location.href = "/login";
     });
 
