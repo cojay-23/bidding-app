@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import shutil
 import uuid
 from pathlib import Path
@@ -14,7 +12,7 @@ from .analyzer import analyze_project
 from .auth import ADMIN_PASSWORD, ADMIN_USERNAME, COOKIE_NAME, create_session_token, require_auth, verify_credentials
 from .config import APP_DIR, PROJECTS_DIR, ensure_dirs
 from .database import add_file, create_project, delete_project, get_project, init_db, list_files, list_projects, list_reports, report_stored_path
-from .security import SecurityHeadersMiddleware, CSRFTokenMiddleware, limiter
+from .security import SecurityHeadersMiddleware, CSRFTokenMiddleware, SlowAPIMiddleware, limiter
 
 
 app = FastAPI(title="Bidding Analyst Internal App", version="0.1.0")
