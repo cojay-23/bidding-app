@@ -616,6 +616,23 @@
       return value.replace("T", " ").slice(0, 16);
     }
 
+    function maskFileName(filename) {
+      const value = String(filename ?? "");
+      const dotIndex = value.lastIndexOf(".");
+      const hasExt = dotIndex > 0;
+      const base = hasExt ? value.slice(0, dotIndex) : value;
+      const ext = hasExt ? value.slice(dotIndex) : "";
+      const chars = Array.from(base);
+      if (!chars.length) return value;
+      if (chars.length === 1) return `*${ext}`;
+      if (chars.length <= 4) return `${chars[0]}${"*".repeat(chars.length - 2)}${chars[chars.length - 1]}${ext}`;
+
+      const headCount = Math.min(3, Math.ceil(chars.length * 0.25));
+      const tailCount = Math.min(4, Math.ceil(chars.length * 0.25));
+      const hiddenCount = Math.max(2, chars.length - headCount - tailCount);
+      return `${chars.slice(0, headCount).join("")}${"*".repeat(hiddenCount)}${chars.slice(-tailCount).join("")}${ext}`;
+    }
+
     function setMessage(id, text) {
       document.getElementById(id).textContent = text || "";
     }
@@ -788,7 +805,7 @@
       function updateUploadZoneLabel(fileList) {
         const count = fileList?.length || filesInput.files?.length || 0;
         if (count > 0) {
-          const names = Array.from(filesInput.files).map(f => f.name).join(", ");
+          const names = Array.from(filesInput.files).map(f => maskFileName(f.name)).join(", ");
           zone.querySelector(".upload-title").textContent = `已选择 ${count} 个文件`;
           zone.querySelector(".upload-hint").textContent = names;
           zone.classList.add("has-files");
@@ -814,12 +831,13 @@
         const iconClass = `file-icon-${["docx","pdf","txt","md"].includes(ext) ? ext : "default"}`;
         const svg = iconSvgs[ext] || iconSvgs.default;
         const sizeKB = file.size > 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${file.size} B`;
+        const displayName = maskFileName(file.filename);
         return `
         <article class="file-card">
           <div style="display:flex;align-items:center;gap:12px;">
             <div class="file-icon ${iconClass}">${svg}</div>
             <div style="min-width:0;flex:1;">
-              <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">${escapeHtml(file.filename)}</strong>
+              <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</strong>
               <span>${sizeKB} · ${formatTime(file.uploaded_at)}</span>
             </div>
           </div>

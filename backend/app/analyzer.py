@@ -173,6 +173,26 @@ def esc(value: Any) -> str:
     return html.escape(str(value or ""))
 
 
+def mask_filename(filename: Any) -> str:
+    value = str(filename or "")
+    dot_index = value.rfind(".")
+    has_ext = dot_index > 0
+    base = value[:dot_index] if has_ext else value
+    ext = value[dot_index:] if has_ext else ""
+    chars = list(base)
+    if not chars:
+        return value
+    if len(chars) == 1:
+        return f"*{ext}"
+    if len(chars) <= 4:
+        return f"{chars[0]}{'*' * (len(chars) - 2)}{chars[-1]}{ext}"
+
+    head_count = min(3, (len(chars) + 3) // 4)
+    tail_count = min(4, (len(chars) + 3) // 4)
+    hidden_count = max(2, len(chars) - head_count - tail_count)
+    return f"{''.join(chars[:head_count])}{'*' * hidden_count}{''.join(chars[-tail_count:])}{ext}"
+
+
 def find_first(patterns: list[str], text: str) -> str:
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -537,7 +557,7 @@ def render_report(summary: dict[str, Any], files: list[dict[str, Any]]) -> str:
         ("advice", "十五、综合分析与建议"),
     ]
     nav = "".join(f'<a href="#{cid}">{esc(title)}</a>' for cid, title in chapters)
-    file_rows = "".join(f"<tr><td>{esc(f['filename'])}</td><td>{f['size']}</td><td>{esc(f['uploaded_at'])}</td></tr>" for f in files)
+    file_rows = "".join(f"<tr><td>{esc(mask_filename(f['filename']))}</td><td>{f['size']}</td><td>{esc(f['uploaded_at'])}</td></tr>" for f in files)
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(summary["project_name"])} 招标文件分析报告</title><style>{css}</style></head>
 <body><div class="report-shell"><aside class="toc"><h1>标书分析报告</h1><p>{esc(summary["project_name"])}<br>生成时间：{esc(summary["generated_at"])}</p><nav>{nav}</nav></aside><main>
 <header class="hero"><h2>{esc(summary["project_name"])} 招标文件分析报告</h2><p>分析人：标书阅读专员 AI · 报告包含废标、评分、得分测算、材料清单、装订要求、框架和自检工具。</p></header>
