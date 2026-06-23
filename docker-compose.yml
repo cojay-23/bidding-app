@@ -4,6 +4,8 @@ services:
       context: .
       args:
         PYTHON_BASE_IMAGE: public.ecr.aws/docker/library/python:3.12-slim
+        APP_UID: ${APP_UID:-999}
+        APP_GID: ${APP_GID:-999}
     container_name: bidding-app
     ports:
       - "8000:8000"

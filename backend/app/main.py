@@ -1,5 +1,6 @@
 import shutil
 import uuid
+import logging
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile, Query, Request
@@ -16,6 +17,7 @@ from .security import SecurityHeadersMiddleware, CSRFTokenMiddleware, SlowAPIMid
 
 
 app = FastAPI(title="Bidding Analyst Internal App", version="0.1.0")
+logger = logging.getLogger(__name__)
 
 # ─── 安全中间件（顺序很重要：先 CSRF，再安全头） ────────
 app.add_middleware(CSRFTokenMiddleware)
@@ -111,11 +113,25 @@ def favicon() -> Response:
 @app.post("/api/projects")
 def api_create_project(name: str = Form("未命名标书分析项目"), _: str = Depends(require_auth)) -> dict:
     project_id = uuid.uuid4().hex[:12]
-    project = create_project(project_id, name.strip() or "未命名标书分析项目")
     project_dir = PROJECTS_DIR / project_id
-    for sub in ("uploads", "extracted", "reports", "logs"):
-        (project_dir / sub).mkdir(parents=True, exist_ok=True)
-    return project
+    try:
+        for sub in ("uploads", "extracted", "reports", "logs"):
+            (project_dir / sub).mkdir(parents=True, exist_ok=True)
+        return create_project(project_id, name.strip() or "未命名标书分析项目")
+    except OSError as exc:
+        logger.exception("Failed to create project directories under %s", project_dir)
+        raise HTTPException(
+            status_code=500,
+            detail="项目数据目录不可写，请检查 /app/data 挂载目录权限。",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to create project record %s", project_id)
+        if project_dir.exists():
+            shutil.rmtree(project_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail="项目数据库写入失败，请检查 /app/data/app.db 权限。",
+        ) from exc
 
 
 @app.get("/api/projects")
@@ -140,10 +156,24 @@ def api_delete_project(project_id: str, _: str = Depends(require_auth)) -> dict[
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
-    delete_project(project_id)
     project_dir = PROJECTS_DIR / project_id
-    if project_dir.exists():
-        shutil.rmtree(project_dir)
+    try:
+        if project_dir.exists():
+            shutil.rmtree(project_dir)
+    except OSError as exc:
+        logger.exception("Failed to remove project directory %s", project_dir)
+        raise HTTPException(
+            status_code=500,
+            detail="项目数据目录删除失败，请检查 /app/data/projects 权限。",
+        ) from exc
+    try:
+        delete_project(project_id)
+    except Exception as exc:
+        logger.exception("Failed to delete project record %s", project_id)
+        raise HTTPException(
+            status_code=500,
+            detail="项目数据库删除失败，请检查 /app/data/app.db 权限。",
+        ) from exc
     return {"status": "deleted"}
 
 

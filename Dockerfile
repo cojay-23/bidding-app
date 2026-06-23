@@ -1,11 +1,15 @@
 ARG PYTHON_BASE_IMAGE=python:3.12-slim
 FROM ${PYTHON_BASE_IMAGE}
 
+ARG APP_UID=999
+ARG APP_GID=999
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 创建非 root 用户
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+# 创建非 root 用户。UID/GID 必须与宿主机 data 目录授权保持一致。
+RUN groupadd --gid "${APP_GID}" appuser \
+    && useradd --uid "${APP_UID}" --gid appuser --home-dir /app --shell /usr/sbin/nologin --no-create-home appuser
 
 WORKDIR /app
 
@@ -14,8 +18,9 @@ RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trus
 
 COPY backend /app/backend
 
-# 修正目录权限
-RUN chown -R appuser:appuser /app
+# 修正镜像内目录权限；bind mount 的 /app/data 仍需宿主机授权。
+RUN mkdir -p /app/data/projects \
+    && chown -R appuser:appuser /app
 
 # 切换到非 root 用户
 USER appuser

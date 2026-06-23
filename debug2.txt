@@ -1,0 +1,62 @@
+INFO:     172.23.0.1:58472 - "GET / HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50270 - "GET /api/me HTTP/1.0" 401 Unauthorized
+INFO:     172.23.0.1:50286 - "POST /api/login HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50300 - "GET /api/me HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50310 - "GET /api/projects HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50316 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:50328 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:50334 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:37032 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:37034 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:49410 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:49422 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:49436 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:49438 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     127.0.0.1:45724 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     172.23.0.1:49446 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:49452 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:49454 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:48452 - "DELETE /api/projects/df22ad319248 HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:48454 - "GET / HTTP/1.0" 304 Not Modified
+INFO:     172.23.0.1:48464 - "GET /api/me HTTP/1.0" 200 OK
+INFO:     172.23.0.1:48470 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:48478 - "GET /api/projects HTTP/1.0" 200 OK
+INFO:     172.23.0.1:48486 - "POST /api/logout HTTP/1.0" 200 OK
+INFO:     127.0.0.1:59898 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55608 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33188 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34588 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     172.23.0.1:58278 - "GET /login HTTP/1.0" 200 OK
+INFO:     172.23.0.1:58284 - "GET /login HTTP/1.0" 200 OK
+INFO:     172.23.0.1:58244 - "POST /api/login HTTP/1.0" 200 OK
+INFO:     172.23.0.1:58250 - "GET /api/me HTTP/1.0" 200 OK
+INFO:     172.23.0.1:58258 - "GET /api/projects HTTP/1.0" 200 OK
+INFO:     172.23.0.1:58272 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     127.0.0.1:50916 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     172.23.0.1:50466 - "POST /api/login HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50468 - "GET / HTTP/1.0" 304 Not Modified
+INFO:     172.23.0.1:50480 - "GET /api/me HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50490 - "GET /api/projects HTTP/1.0" 200 OK
+INFO:     172.23.0.1:50500 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:50504 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:50520 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:50528 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:50544 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:50554 - "POST /api/projects HTTP/1.0" 500 Internal Server Error
+INFO:     172.23.0.1:57592 - "GET /api/projects/df22ad319248/report HTTP/1.0" 200 OK
+INFO:     172.23.0.1:57600 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:57610 - "GET /api/projects/24d052141149/report HTTP/1.0" 200 OK
+INFO:     172.23.0.1:57622 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     172.23.0.1:57638 - "GET /api/projects/24d052141149/reports HTTP/1.0" 200 OK
+INFO:     172.23.0.1:52376 - "GET /favicon.ico HTTP/1.0" 204 No Content
+INFO:     127.0.0.1:42816 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51788 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49398 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53102 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53026 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45034 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38892 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48886 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51508 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54904 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41632 - "GET /api/health HTTP/1.1" 200 OK

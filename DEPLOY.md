@@ -89,6 +89,10 @@ SESSION_SECRET=你的会话密钥随机串
 
 # 可选：模型选择
 LLM_MODEL=kimi-k2.6
+
+# 容器内运行用户（需与 data 目录授权一致）
+APP_UID=999
+APP_GID=999
 EOF
 ```
 
@@ -100,6 +104,12 @@ EOF
 
 ```bash
 cd /root/bidding-app
+
+# 创建持久化目录，并授权给容器内非 root 用户。
+# 如果 .env 中修改了 APP_UID/APP_GID，这里也要使用相同值。
+mkdir -p data/projects
+chown -R 999:999 data
+
 docker compose up -d --build
 ```
 
@@ -273,6 +283,7 @@ tar -czf backup-$(date +%Y%m%d).tar.gz /root/bidding-app/data/
 | 现象 | 检查 |
 |------|------|
 | 页面打不开 | `docker ps` 看容器是否在跑；检查安全组规则 |
+| 新建/删除项目 500 | `docker logs bidding-app --tail 100`；重点检查 `/app/data` 或 `/app/data/app.db` 是否不可写；执行 `chown -R 999:999 /root/bidding-app/data` 后重建启动 |
 | 高级分析报错 | `docker logs bidding-app \| grep -i error`；确认 .env 中 API Key 正确 |
 | 大文件上传失败 | Nginx 配置中 `client_max_body_size` 是否够大；Docker 剩余磁盘空间 `df -h` |
 | 容器启动失败 | `docker compose up` 看构建报错信息 |
