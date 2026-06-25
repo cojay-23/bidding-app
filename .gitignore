@@ -1,8 +1,59 @@
+# Local environments
 .venv/
+venv/
+env/
+
+# Python runtime artifacts
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Application data and sensitive runtime files
+data/
+.data/
+*.db
+*.db3
+*.sqlite
+*.sqlite3
+
+# Uploaded, generated, and extracted bid materials
+uploads/
+extracted/
+reports/
+outputs/
+artifacts/
+
+# Logs and local run records
+logs/
+log/
+*.log
+*.pid
+.playwright-cli/
+.workbuddy/memory/
+
+# Secrets and local config
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+
+# Archives and temporary files
 *.tar.gz
 *.zip
-.data
+*.tmp
+*.bak
+tmp/
+temp/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
